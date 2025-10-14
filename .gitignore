@@ -37,5 +37,37 @@
 *.out
 *.app
 
-# debug information files
+# Debug information files
 *.dwo
+
+# CMake build directories
+build/
+cmake-build-*/
+
+# Object and binary files
+*.o
+*.a
+*.so
+*.elf
+*.bin
+*.out
+
+# Logs and temp files
+*.log
+*.tmp
+
+# Python scripts cache (if you use helper scripts)
+__pycache__/
+*.pyc
+
+# IDE project files
+.vscode/
+.idea/
+
+# Editor backup/temp files
+*~
+*.swp
+
+# Binary data dumps
+*.dat
+*.dump
