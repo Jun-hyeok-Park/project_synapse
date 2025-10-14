@@ -1,3 +1,0 @@
-/home/user/project/project_synapse/build/CMakeFiles/veh_server.dir
-/home/user/project/project_synapse/build/CMakeFiles/edit_cache.dir
-/home/user/project/project_synapse/build/CMakeFiles/rebuild_cache.dir
