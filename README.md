@@ -6,28 +6,30 @@ AEB / OTA / Diagnostic 기능을 서비스 단위로 관리하는 프로젝트�
 ---
 
 ## 🏗️ 구조
+```
 project_synapse/
 ├── CMakeLists.txt
 ├── README.md
 ├── .gitignore
 │
 ├── common/
-│   ├── CMakeLists.txt
-│   ├── include/
-│   │   └── common_defs.h
-│   └── src/
-│       └── logger.cpp
+│ ├── CMakeLists.txt
+│ ├── include/
+│ │ └── common_defs.h
+│ └── src/
+│ └── logger.cpp
 │
 ├── server/
-│   ├── CMakeLists.txt
-│   ├── include/
-│   │   └── server_app.h
-│   └── src/
-│       └── main.cpp
+│ ├── CMakeLists.txt
+│ ├── include/
+│ │ └── server_app.h
+│ └── src/
+│ └── main.cpp
 │
 └── client/
-    ├── CMakeLists.txt
-    ├── include/
-    │   └── client_app.h
-    └── src/
-        └── main.cpp
+├── CMakeLists.txt
+├── include/
+│ └── client_app.h
+└── src/
+└── main.cpp
+```
