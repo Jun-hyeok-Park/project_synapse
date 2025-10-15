@@ -3,6 +3,8 @@
 #include <vsomeip/vsomeip.hpp>
 #include "../common/veh_control_service.hpp"
 #include "../common/veh_status_service.hpp"
+#include <thread>
+#include <iostream>
 
 namespace py = pybind11;
 
@@ -10,8 +12,49 @@ class VsomeipClient {
 public:
     VsomeipClient() {
         app_ = vsomeip::runtime::get()->create_application("veh_gui_client");
-        app_->init();
-        app_->start();
+        if (!app_->init()) {
+            std::cerr << "[vsomeip] init failed!\n";
+            return;
+        }
+
+        // 이벤트 핸들러 등록
+        app_->register_message_handler(
+            VEH_STATUS_SERVICE_ID,
+            VEH_STATUS_INSTANCE_ID,
+            VEH_STATUS_EVENT_ID,
+            [this](const std::shared_ptr<vsomeip::message> &msg) {
+                auto payload = msg->get_payload();
+                auto data = payload->get_data();
+                auto len = payload->get_length();
+                std::vector<uint8_t> vec(data, data + len);
+                uint16_t msg_type = msg->get_method();
+
+                if (py_callback_)
+                    py_callback_(msg_type, vec);
+            });
+
+        // 별도 스레드에서 vsomeip 실행
+        worker_ = std::thread([this]() {
+            app_->start();
+        });
+
+        // 서비스 및 이벤트 구독 요청
+        app_->request_service(VEH_STATUS_SERVICE_ID, VEH_STATUS_INSTANCE_ID);
+        app_->subscribe(VEH_STATUS_SERVICE_ID, VEH_STATUS_INSTANCE_ID, VEH_STATUS_EVENT_ID);
+
+        std::cout << "[vsomeip] Client started successfully.\n";
+    }
+
+    ~VsomeipClient() {
+        try {
+            app_->unsubscribe(VEH_STATUS_SERVICE_ID, VEH_STATUS_INSTANCE_ID, VEH_STATUS_EVENT_ID);
+            app_->release_service(VEH_STATUS_SERVICE_ID, VEH_STATUS_INSTANCE_ID);
+            app_->stop();
+            if (worker_.joinable()) worker_.join();
+            std::cout << "[vsomeip] Client stopped.\n";
+        } catch (...) {
+            std::cerr << "[vsomeip] Exception on shutdown.\n";
+        }
     }
 
     void send_command(uint8_t cmd, const std::vector<uint8_t> &payload) {
@@ -29,35 +72,19 @@ public:
     }
 
     void set_event_callback(py::function callback) {
-        // Python 콜백 저장
         py_callback_ = callback;
-
-        app_->register_message_handler(
-            VEH_STATUS_SERVICE_ID,
-            VEH_STATUS_INSTANCE_ID,
-            VEH_STATUS_EVENT_ID,
-            [this](const std::shared_ptr<vsomeip::message> &msg) {
-                auto payload = msg->get_payload();
-                auto data = payload->get_data();
-                auto len = payload->get_length();
-
-                std::vector<uint8_t> vec(data, data + len);
-                uint16_t msg_type = msg->get_method();
-
-                if (py_callback_) {
-                    py_callback_(msg_type, vec);
-                }
-            });
     }
 
     void poll_events() {
-        // vsomeip는 blocking loop 기반이라 별도 poll 불필요하지만,
-        // GUI 쪽에서 주기적으로 호출 가능하게 placeholder
+        static int cnt = 0;
+        if (++cnt % 50 == 0)
+            std::cout << "[poll] vsomeip alive\n";
     }
 
 private:
     std::shared_ptr<vsomeip::application> app_;
     py::function py_callback_;
+    std::thread worker_;
 };
 
 PYBIND11_MODULE(synapse_vsomeip, m) {
