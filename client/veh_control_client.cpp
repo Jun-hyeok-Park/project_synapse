@@ -22,6 +22,10 @@ public:
             std::bind(&veh_client::on_availability, this,
                       std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
 
+        app_->register_message_handler(
+            SERVICE_ID, INSTANCE_ID, METHOD_ID,
+            std::bind(&veh_client::on_response, this, std::placeholders::_1));
+
         app_->start();
         return true;
     }
@@ -80,30 +84,25 @@ private:
         }
     }
 
+    void on_response(const std::shared_ptr<vsomeip::message> &resp) {
+        auto pl = resp->get_payload();
+        const uint8_t *d = pl->get_data();
+        std::size_t n = pl->get_length();
+        if (n >= 1)
+            std::cout << "[CLI] Response: 0x" << std::hex << int(d[0]) << std::dec << "\n";
+        else
+            std::cout << "[CLI] (no payload)\n";
+    }
+
     void call_and_print(std::shared_ptr<vsomeip::payload> payload, const char *tag) {
         auto req = vsomeip::runtime::get()->create_request();
         req->set_service(SERVICE_ID);
         req->set_instance(INSTANCE_ID);
         req->set_method(METHOD_ID);
         req->set_payload(payload);
+        app_->send(req);
 
-        // 동기식 요청-응답
-        auto f = app_->send(req, true); // true: block for response
-        const auto &resp = f.get();
-
-        if (resp) {
-            auto pl = resp->get_payload();
-            const uint8_t *d = pl->get_data();
-            std::size_t n = pl->get_length();
-            if (n >= 1) {
-                std::cout << "[CLI] " << tag << " -> resp: 0x"
-                          << std::hex << int(d[0]) << std::dec << "\n";
-            } else {
-                std::cout << "[CLI] " << tag << " -> (no payload)\n";
-            }
-        } else {
-            std::cout << "[CLI] " << tag << " -> (no response)\n";
-        }
+        std::cout << "[CLI] Sent " << tag << "\n";
     }
 
     std::shared_ptr<vsomeip::application> app_;
