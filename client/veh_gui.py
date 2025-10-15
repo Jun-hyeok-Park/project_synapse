@@ -1,121 +1,111 @@
 import sys
+import time
+import threading
 from PyQt5.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QSlider, QLineEdit, QGroupBox
+    QApplication, QWidget, QPushButton, QVBoxLayout, QLabel, QHBoxLayout, QMessageBox
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 import synapse_vsomeip as sv
 
-# ===========================================================
-# VEH GUI — Project SYNAPSE PyQt Control Interface
-# ===========================================================
 
 class VehGui(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Project SYNAPSE — Vehicle Control GUI")
-        self.setGeometry(200, 200, 520, 440)
+        self.setWindowTitle("Project SYNAPSE - Vehicle Control GUI")
+        self.setGeometry(200, 200, 420, 300)
 
-        # C++ vsomeip 클라이언트 직접 초기화
-        self.client = sv.Client()
-        assert self.client.init(), "vsomeip client init failed"
-        self.client.set_response_callback(self.on_response_code)
-        # (선택) self.client.set_event_callback(self.on_status_event)
-        self.client.start()
+        # vsomeip client
+        self.client = sv.VsomeipClient()
+        self.client.init()
+        self.client.register_status_callback(self.on_status_event)
 
-        self.init_ui()
+        # 내부 상태
+        self.last_event = "No event received"
+        self.running = True
 
-    def closeEvent(self, e):
+        # UI 구성
+        self.setup_ui()
+
+        # vsomeip 스레드 시작
+        self.thread = threading.Thread(target=self.client.start, daemon=True)
+        self.thread.start()
+
+        # 주기적 상태 갱신
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_status)
+        self.timer.start(1000)
+
+    def setup_ui(self):
+        # 상태 표시
+        self.label_status = QLabel("Waiting for server...")
+        self.label_status.setAlignment(Qt.AlignCenter)
+        self.label_status.setStyleSheet("font-size: 15px; font-weight: bold;")
+
+        # 제어 버튼
+        self.btn_forward = QPushButton("↑ Forward")
+        self.btn_backward = QPushButton("↓ Backward")
+        self.btn_stop = QPushButton("■ Stop")
+        self.btn_exit = QPushButton("Exit")
+
+        for btn in [self.btn_forward, self.btn_backward, self.btn_stop, self.btn_exit]:
+            btn.setFixedHeight(45)
+            btn.setStyleSheet("font-size: 16px;")
+
+        # 버튼 동작 연결
+        self.btn_forward.clicked.connect(lambda: self.send_cmd(0x01, [0x08]))
+        self.btn_backward.clicked.connect(lambda: self.send_cmd(0x01, [0x02]))
+        self.btn_stop.clicked.connect(lambda: self.send_cmd(0x01, [0x05]))
+        self.btn_exit.clicked.connect(self.close_app)
+
+        # 레이아웃
+        vbox = QVBoxLayout()
+        vbox.addWidget(self.label_status)
+
+        hbox1 = QHBoxLayout()
+        hbox1.addWidget(self.btn_forward)
+        hbox1.addWidget(self.btn_backward)
+
+        hbox2 = QHBoxLayout()
+        hbox2.addWidget(self.btn_stop)
+        hbox2.addWidget(self.btn_exit)
+
+        vbox.addLayout(hbox1)
+        vbox.addLayout(hbox2)
+
+        self.setLayout(vbox)
+
+    def send_cmd(self, cmd_type, val):
         try:
-            self.client.stop()
-        except Exception:
-            pass
-        e.accept()
+            self.client.send_command(cmd_type, val)
+            self.label_status.setText(f"📡 Sent: cmd=0x{cmd_type:02X}, val={val}")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to send command:\n{e}")
 
-    def init_ui(self):
-        main = QVBoxLayout()
+    def on_status_event(self, data):
+        """C++ vsomeip 이벤트 수신 → Python 콜백"""
+        if not data:
+            return
+        status_type = data[0]
+        value = data[1] if len(data) > 1 else None
 
-        # ─────────────── 주행 제어 ───────────────
-        g_drive = QGroupBox("Drive Control")
-        lay = QHBoxLayout()
-        for text in ["↑ Forward", "↓ Backward", "← Left", "→ Right", "■ Stop"]:
-            btn = QPushButton(text); btn.setFixedHeight(48)
-            btn.clicked.connect(self.on_drive); lay.addWidget(btn)
-        g_drive.setLayout(lay); main.addWidget(g_drive)
+        text = f"Event → type=0x{status_type:02X}, val=0x{value:02X}" if value else f"Event type={status_type}"
+        self.last_event = text
 
-        # ─────────────── 속도 제어 ───────────────
-        g_speed = QGroupBox("Speed (Duty %)")
-        lay = QVBoxLayout()
-        self.lb_speed = QLabel("0%")
-        sld = QSlider(Qt.Horizontal); sld.setRange(0, 100)
-        sld.valueChanged.connect(lambda v: self.lb_speed.setText(f"{v}%"))
-        sld.sliderReleased.connect(lambda: self.client.send_command(0x02, [sld.value()]))
-        lay.addWidget(sld); lay.addWidget(self.lb_speed)
-        g_speed.setLayout(lay); main.addWidget(g_speed)
+    def update_status(self):
+        self.label_status.setText(self.last_event)
 
-        # ─────────────── AEB / AutoPark ───────────────
-        g_auto = QGroupBox("AEB / AutoPark")
-        lay = QHBoxLayout()
-        btn_aeb = QPushButton("AEB ON")
-        btn_ap  = QPushButton("AutoPark START")
-        btn_aeb.clicked.connect(lambda: self.client.send_command(0x03, [0x01]))
-        btn_ap.clicked.connect(lambda: self.client.send_command(0x04, [0x01]))
-        lay.addWidget(btn_aeb); lay.addWidget(btn_ap)
-        g_auto.setLayout(lay); main.addWidget(g_auto)
+    def close_app(self):
+        self.running = False
+        self.client.stop()
+        self.close()
 
-        # ─────────────── Auth ───────────────
-        g_auth = QGroupBox("Auth")
-        lay = QHBoxLayout()
-        self.ed_pw = QLineEdit(); self.ed_pw.setPlaceholderText("Enter password (e.g., 1234)")
-        btn_login = QPushButton("Login")
-        btn_login.clicked.connect(self.on_auth)
-        lay.addWidget(self.ed_pw); lay.addWidget(btn_login)
-        g_auth.setLayout(lay); main.addWidget(g_auth)
 
-        # ─────────────── Fault / Emergency ───────────────
-        g_fault = QGroupBox("Fault")
-        lay = QHBoxLayout()
-        QPushButton.setAutoDefault
-        btn_reset = QPushButton("Reset Fault")
-        btn_estop = QPushButton("Emergency Stop")
-        btn_reset.clicked.connect(lambda: self.client.send_command(0xFE, [0x00]))
-        btn_estop.clicked.connect(lambda: self.client.send_command(0xFE, [0x01]))
-        lay.addWidget(btn_reset); lay.addWidget(btn_estop)
-        g_fault.setLayout(lay); main.addWidget(g_fault)
-
-        # ─────────────── 상태 표시 ───────────────
-        self.lb_status = QLabel("Status: Ready"); self.lb_status.setAlignment(Qt.AlignCenter)
-        main.addWidget(self.lb_status)
-
-        self.setLayout(main)
-
-    # ========== UI Handlers ==========
-    def on_drive(self):
-        sender = self.sender().text()
-        mapping = {"↑ Forward":0x08, "↓ Backward":0x02, "← Left":0x04, "→ Right":0x06, "■ Stop":0x05}
-        v = mapping.get(sender, 0x05)
-        self.client.send_command(0x01, [v])
-        self.lb_status.setText(f"Drive: {sender}")
-
-    def on_auth(self):
-        pw = self.ed_pw.text()
-        data = [ord(c) for c in pw][:7]
-        self.client.send_command(0x05, data)
-        self.lb_status.setText(f"Auth sent: {pw}")
-
-    # ========== Callbacks from C++ ==========
-    def on_response_code(self, code:int):
-        self.lb_status.setText("Server Response: OK" if code == 0x00 else "Server Response: ERROR")
-
-    # def on_status_event(self, status_type:int, payload:bytes):
-    #     # 필요 시 이벤트 표시 로직 추가 (pybind에서 콜백 호출하도록 확장)
-    #     pass
-
-# ===========================================================
-# MAIN
-# ===========================================================
-if __name__ == "__main__":
+def main():
     app = QApplication(sys.argv)
     gui = VehGui()
     gui.show()
     sys.exit(app.exec_())
+
+
+if __name__ == "__main__":
+    main()

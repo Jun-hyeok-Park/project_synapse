@@ -5,74 +5,59 @@
 #pragma once
 #include <iostream>
 #include <fstream>
+#include <sstream>
 #include <string>
+#include <mutex>
 #include <ctime>
 #include <iomanip>
-#include <mutex>
 
 namespace veh {
 
-enum class LogLevel {
-    INFO,
-    WARN,
-    ERROR
-};
+enum class LogLevel { INFO, WARN, ERROR };
 
 class Logger {
-private:
-    std::ofstream file;
-    std::mutex lock;
-    std::string log_name;
-
-    // 현재 시각 문자열 반환
-    std::string timestamp() {
-        std::time_t now = std::time(nullptr);
-        std::tm tm{};
-        localtime_r(&now, &tm);
-        std::ostringstream oss;
-        oss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
-        return oss.str();
+public:
+    explicit Logger(const std::string& filename = "veh.log")
+        : file_(filename, std::ios::app), name_(filename) {
+        if (!file_.is_open())
+            std::cerr << "[veh_logger] Failed to open: " << filename << std::endl;
     }
 
-    std::string level_to_str(LogLevel lv) {
+    void write(LogLevel lv, const std::string& msg) {
+        std::lock_guard<std::mutex> g(m_);
+        if (!file_.is_open()) return;
+
+        file_ << "[" << now() << "][" << to_str(lv) << "] " << msg << '\n';
+        file_.flush();
+        std::cout << "[" << to_str(lv) << "] " << msg << std::endl;
+    }
+
+private:
+    std::ofstream file_;
+    std::mutex m_;
+    std::string name_;
+
+    static std::string now() {
+        std::time_t t = std::time(nullptr);
+        std::tm tm{}; localtime_r(&t, &tm);
+        std::ostringstream os;
+        os << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
+        return os.str();
+    }
+
+    static const char* to_str(LogLevel lv) {
         switch (lv) {
             case LogLevel::INFO:  return "INFO";
             case LogLevel::WARN:  return "WARN";
             case LogLevel::ERROR: return "ERROR";
-            default:              return "LOG";
         }
-    }
-
-public:
-    explicit Logger(const std::string& filename = "veh_default.log") {
-        file.open(filename, std::ios::out | std::ios::app);
-        log_name = filename;
-        if (!file.is_open())
-            std::cerr << "[veh_logger] Failed to open log file: " << filename << std::endl;
-    }
-
-    ~Logger() {
-        if (file.is_open()) file.close();
-    }
-
-    void write(LogLevel level, const std::string& msg) {
-        std::lock_guard<std::mutex> guard(lock);
-        if (!file.is_open()) return;
-
-        file << "[" << timestamp() << "]"
-             << "[" << level_to_str(level) << "] "
-             << msg << std::endl;
-
-        // 콘솔에도 출력
-        std::cout << "[" << level_to_str(level) << "] " << msg << std::endl;
+        return "LOG";
     }
 };
 
-// ────────────────────────────────
-// 전역 매크로 (간편 사용용)
-// ────────────────────────────────
-#define LOG_INFO(logger, msg)  (logger).write(veh::LogLevel::INFO,  msg)
-#define LOG_WARN(logger, msg)  (logger).write(veh::LogLevel::WARN,  msg)
-#define LOG_ERROR(logger, msg) (logger).write(veh::LogLevel::ERROR, msg)
+#define LOG_INFO(lg, msg)  (lg).write(::veh::LogLevel::INFO,  (msg))
+#define LOG_WARN(lg, msg)  (lg).write(::veh::LogLevel::WARN,  (msg))
+#define LOG_ERROR(lg, msg) (lg).write(::veh::LogLevel::ERROR, (msg))
 
 } // namespace veh
+
