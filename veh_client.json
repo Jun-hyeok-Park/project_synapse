@@ -1,0 +1,20 @@
+{
+  "unicast": "192.168.50.3",
+  "netmask": "255.255.255.0",
+  "logging": { "level": "info" },
+  "applications": [
+    { "name": "veh_control_client", "id": "0x5555" }
+  ],
+  "clients": [
+    { "service": "0x1100", "instance": "0x0001" }
+  ],
+  "routing": "veh_control_client",
+  "service-discovery": {
+    "enable": true,
+    "multicast": "224.244.224.245",
+    "port": "30490",
+    "protocol": "udp",
+    "initial_delay_min": 10,
+    "initial_delay_max": 100
+  }
+}
