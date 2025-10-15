@@ -4,10 +4,11 @@
   "applications": [
     { 
       "name": "veh_control_server", 
-      "id": "0x4444",
-      "routing": "true"
+      "id": "0x4444"
     }
   ],
+
+  "routing": "veh_control_server",
 
   "services": [
     {
