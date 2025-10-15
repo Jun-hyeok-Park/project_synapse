@@ -1,112 +1,122 @@
-#include <iostream>
-#include <iomanip>
-#include <thread>
-#include <algorithm>
 #include <vsomeip/vsomeip.hpp>
-#include "veh_can.hpp"
-#include "veh_control_service.hpp"
-#include "veh_logger.hpp"
+#include <cstring>
+#include <iostream>
+#include <mutex>
 
-// 명령 수신 → CAN 송신 서버
+static constexpr vsomeip::service_t  SERVICE_ID  = 0x1100;
+static constexpr vsomeip::instance_t INSTANCE_ID = 0x0001;
+static constexpr vsomeip::method_t   METHOD_ID   = 0x0100;
 
-veh::Logger server_logger("logs/veh_server.log");
+static constexpr uint8_t RESP_OK  = 0x00;
+static constexpr uint8_t RESP_ERR = 0xFF;
 
-class VehControlServer {
+class veh_server {
 public:
-    VehControlServer()
-        : app_(vsomeip::runtime::get()->create_application("veh_control_server")),
-          can_("can0") {}
+    veh_server()
+        : app_(vsomeip::runtime::get()->create_application("veh_control_server")) {}
 
     bool init() {
-        if (!app_->init()) {
-            LOG_ERROR(server_logger, "vsomeip init failed!");
-            return false;
-        }
+        if (!app_->init()) return false;
 
-        app_->register_state_handler([this](vsomeip::state_type_e state) {
-            if (state == vsomeip::state_type_e::ST_REGISTERED) {
-                offer_service();
-            }
-        });
-
+        // 수신 콜백 등록
         app_->register_message_handler(
-            VEH_CONTROL_SERVICE_ID,
-            VEH_CONTROL_INSTANCE_ID,
-            VEH_CONTROL_METHOD_ID,
-            std::bind(&VehControlServer::on_message, this, std::placeholders::_1));
+            SERVICE_ID, INSTANCE_ID, METHOD_ID,
+            std::bind(&veh_server::on_request, this,
+                      std::placeholders::_1));
 
-        if (!can_.init()) {
-            LOG_ERROR(server_logger, "CAN init failed!");
-            return false;
-        }
+        // 서비스 오퍼
+        app_->offer_service(SERVICE_ID, INSTANCE_ID);
 
         return true;
     }
 
     void start() {
-        LOG_INFO(server_logger, "Starting veh_control_server...");
         app_->start();
     }
 
 private:
-    std::shared_ptr<vsomeip::application> app_;
-    CanInterface can_;
+    void on_request(const std::shared_ptr<vsomeip::message> &req) {
+        auto resp = vsomeip::runtime::get()->create_response(req);
+        auto payload = req->get_payload();
+        auto data = payload->get_data();
+        auto size = payload->get_length();
 
-    void offer_service() {
-        app_->offer_service(VEH_CONTROL_SERVICE_ID, VEH_CONTROL_INSTANCE_ID);
-        LOG_INFO(server_logger, "veh_control_service offered.");
-    }
+        uint8_t result = RESP_ERR;
+        if (size >= 1) {
+            uint8_t cmd_type = data[0];
+            // cmd_value는 가변
+            const uint8_t* cmd_value = (size > 1) ? (data + 1) : nullptr;
+            std::size_t cmd_len = (size > 1) ? (size - 1) : 0;
 
-    static std::string to_hex(uint8_t v) {
-        std::ostringstream oss;
-        oss << std::uppercase << std::hex << std::setw(2) << std::setfill('0') << int(v);
-        return oss.str();
-    }
-
-    void on_message(const std::shared_ptr<vsomeip::message> &msg) {
-        auto payload  = msg->get_payload();
-        auto data_ptr = payload->get_data();
-        auto len      = payload->get_length();
-
-        if (!data_ptr || len == 0) {
-            LOG_WARN(server_logger, "Empty payload received.");
-            return;
+            // 여기서 실제 동작 분기 (하드웨어/펌웨어 연계는 TODO 훅으로)
+            switch (cmd_type) {
+                case 0x01: // Drive Direction
+                    if (cmd_len >= 1) {
+                        uint8_t dir = cmd_value[0];
+                        // TODO: Drive_SetDirection(dir);
+                        std::cout << "[SRV] Direction: 0x" << std::hex << int(dir) << std::dec << "\n";
+                        result = RESP_OK;
+                    }
+                    break;
+                case 0x02: // Drive Speed (Duty 0~100)
+                    if (cmd_len >= 1) {
+                        uint8_t duty = cmd_value[0];
+                        // TODO: Drive_SetDuty(duty);
+                        std::cout << "[SRV] Duty: " << int(duty) << "%\n";
+                        result = RESP_OK;
+                    }
+                    break;
+                case 0x03: // AEB Control
+                    if (cmd_len >= 1) {
+                        bool on = (cmd_value[0] != 0);
+                        // TODO: AEB_Set(on);
+                        std::cout << "[SRV] AEB: " << (on ? "ON" : "OFF") << "\n";
+                        result = RESP_OK;
+                    }
+                    break;
+                case 0x04: // AutoPark Control
+                    if (cmd_len >= 1) {
+                        uint8_t sub = cmd_value[0]; // 0x01 start, 0x00 cancel 등
+                        // TODO: AutoPark_Command(sub);
+                        std::cout << "[SRV] AutoPark cmd: 0x" << std::hex << int(sub) << std::dec << "\n";
+                        result = RESP_OK;
+                    }
+                    break;
+                case 0x05: { // Auth Password (ASCII)
+                    std::string pwd(reinterpret_cast<const char*>(cmd_value), cmd_len);
+                    // TODO: 실제 비교. 여기서는 "1234"만 OK
+                    bool ok = (pwd == "1234");
+                    std::cout << "[SRV] Auth pwd=\"" << pwd << "\" -> " << (ok ? "OK" : "FAIL") << "\n";
+                    result = ok ? RESP_OK : RESP_ERR;
+                    break;
+                }
+                case 0xFE: // Fault/E-Stop
+                    if (cmd_len >= 1) {
+                        uint8_t sub = cmd_value[0]; // 0x01 Emergency Stop 등
+                        // TODO: Fault_Handle(sub);
+                        std::cout << "[SRV] Fault cmd: 0x" << std::hex << int(sub) << std::dec << "\n";
+                        result = RESP_OK;
+                    }
+                    break;
+                default:
+                    std::cerr << "[SRV] Unknown cmd_type: 0x" << std::hex << int(cmd_type) << std::dec << "\n";
+            }
         }
 
-        std::vector<uint8_t> data(data_ptr, data_ptr + len);
-
-        uint8_t cmd_type = data[0];
-        uint8_t cmd_val  = (len > 1) ? data[1] : 0x00;
-
-        LOG_INFO(server_logger,
-                 "Received Command → Type: 0x" + to_hex(cmd_type) +
-                 "  Value: 0x" + to_hex(cmd_val));
-
-        // CAN 프레임 전송
-        CanFrame frame{};
-        frame.id  = 0x100;
-        frame.dlc = static_cast<uint8_t>(std::min<size_t>(8, size_t(len)));
-        std::copy_n(data.begin(), frame.dlc, frame.data.begin());
-
-        can_.sendFrame(frame);
-        LOG_INFO(server_logger, "Sent CAN frame with " + std::to_string(frame.dlc) + " bytes.");
-
-        // 응답(ACK)
-        auto resp          = vsomeip::runtime::get()->create_response(msg);
-        auto resp_payload  = vsomeip::runtime::get()->create_payload();
-        std::vector<uint8_t> ack = { 0x00 };
-        resp_payload->set_data(ack);
-        resp->set_payload(resp_payload);
+        // 응답(선택) – 1바이트 OK/ERR
+        auto resp_pl = vsomeip::runtime::get()->create_payload();
+        uint8_t b = result;
+        resp_pl->set_data(&b, 1);
+        resp->set_payload(resp_pl);
         app_->send(resp);
     }
+
+    std::shared_ptr<vsomeip::application> app_;
 };
 
 int main() {
-    VehControlServer server;
-    if (!server.init()) {
-        LOG_ERROR(server_logger, "Server initialization failed!");
-        return 1;
-    }
-    server.start();
+    veh_server s;
+    if (!s.init()) return 1;
+    s.start();
     return 0;
 }
