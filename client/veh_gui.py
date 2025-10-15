@@ -1,111 +1,163 @@
+# veh_gui.py (Enhanced)
 import sys
-import time
-import threading
+import os
 from PyQt5.QtWidgets import (
-    QApplication, QWidget, QPushButton, QVBoxLayout, QLabel, QHBoxLayout, QMessageBox
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
+    QLabel, QSlider, QGridLayout, QGroupBox, QFrame
 )
 from PyQt5.QtCore import Qt, QTimer
 import synapse_vsomeip as sv
 
+sys.path.append(os.path.expanduser("~/project/project_synapse/build"))
 
-class VehGui(QWidget):
+class VehicleControlGUI(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Project SYNAPSE - Vehicle Control GUI")
-        self.setGeometry(200, 200, 420, 300)
+        self.setGeometry(600, 300, 500, 550)
 
-        # vsomeip client
+        # 상태 변수
+        self.speed = 0
+        self.direction = "STOP"
+        self.aeb = False
+        self.autopark = False
+        self.tof_distance = 0
+
+        # vsomeip 클라이언트 초기화
         self.client = sv.VsomeipClient()
-        self.client.init()
-        self.client.register_status_callback(self.on_status_event)
+        self.client.set_event_callback(self.on_status_update)
 
-        # 내부 상태
-        self.last_event = "No event received"
-        self.running = True
+        # UI 초기화
+        self.init_ui()
 
-        # UI 구성
-        self.setup_ui()
+        # 주기적 이벤트 폴링
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.client.poll_events)
+        self.timer.start(200)
 
-        # vsomeip 스레드 시작
-        self.thread = threading.Thread(target=self.client.start, daemon=True)
-        self.thread.start()
+    # =========================== UI ================================
+    def init_ui(self):
+        layout = QVBoxLayout()
 
-        # 주기적 상태 갱신
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.update_status)
-        self.timer.start(1000)
+        # -------- 상태 표시 --------
+        status_box = QGroupBox("Vehicle Status")
+        grid = QGridLayout()
+        self.dir_label = QLabel("Direction: STOP")
+        self.spd_label = QLabel("Speed: 0%")
+        self.aeb_label = QLabel("AEB: OFF")
+        self.park_label = QLabel("AutoPark: OFF")
+        self.tof_label = QLabel("ToF: 0 cm")
 
-    def setup_ui(self):
-        # 상태 표시
-        self.label_status = QLabel("Waiting for server...")
-        self.label_status.setAlignment(Qt.AlignCenter)
-        self.label_status.setStyleSheet("font-size: 15px; font-weight: bold;")
+        for lbl in [self.dir_label, self.spd_label, self.aeb_label, self.park_label, self.tof_label]:
+            lbl.setFrameStyle(QFrame.Panel | QFrame.Sunken)
+            lbl.setAlignment(Qt.AlignCenter)
 
-        # 제어 버튼
-        self.btn_forward = QPushButton("↑ Forward")
-        self.btn_backward = QPushButton("↓ Backward")
-        self.btn_stop = QPushButton("■ Stop")
-        self.btn_exit = QPushButton("Exit")
+        grid.addWidget(self.dir_label, 0, 0)
+        grid.addWidget(self.spd_label, 0, 1)
+        grid.addWidget(self.aeb_label, 1, 0)
+        grid.addWidget(self.park_label, 1, 1)
+        grid.addWidget(self.tof_label, 2, 0, 1, 2)
+        status_box.setLayout(grid)
+        layout.addWidget(status_box)
 
-        for btn in [self.btn_forward, self.btn_backward, self.btn_stop, self.btn_exit]:
-            btn.setFixedHeight(45)
-            btn.setStyleSheet("font-size: 16px;")
+        # -------- 8방향 제어 --------
+        drive_box = QGroupBox("Drive Control")
+        drive_grid = QGridLayout()
+        btns = {
+            "↖": (-1, -1), "↑": (0, -1), "↗": (1, -1),
+            "←": (-1, 0), "Stop": (0, 0), "→": (1, 0),
+            "↙": (-1, 1), "↓": (0, 1), "↘": (1, 1),
+        }
+        for label, pos in btns.items():
+            btn = QPushButton(label)
+            btn.clicked.connect(lambda _, d=label: self.on_direction(d))
+            drive_grid.addWidget(btn, pos[1]+1, pos[0]+1)
+        drive_box.setLayout(drive_grid)
+        layout.addWidget(drive_box)
 
-        # 버튼 동작 연결
-        self.btn_forward.clicked.connect(lambda: self.send_cmd(0x01, [0x08]))
-        self.btn_backward.clicked.connect(lambda: self.send_cmd(0x01, [0x02]))
-        self.btn_stop.clicked.connect(lambda: self.send_cmd(0x01, [0x05]))
-        self.btn_exit.clicked.connect(self.close_app)
-
-        # 레이아웃
+        # -------- 속도 조절 --------
+        spd_box = QGroupBox("Speed Control")
         vbox = QVBoxLayout()
-        vbox.addWidget(self.label_status)
+        self.speed_slider = QSlider(Qt.Horizontal)
+        self.speed_slider.setRange(0, 100)
+        self.speed_slider.valueChanged.connect(self.on_speed_change)
+        vbox.addWidget(self.speed_slider)
+        spd_box.setLayout(vbox)
+        layout.addWidget(spd_box)
 
-        hbox1 = QHBoxLayout()
-        hbox1.addWidget(self.btn_forward)
-        hbox1.addWidget(self.btn_backward)
+        # -------- 안전기능 --------
+        safety_box = QGroupBox("Safety Features")
+        hbox = QHBoxLayout()
+        self.aeb_btn = QPushButton("AEB: OFF")
+        self.autopark_btn = QPushButton("AutoPark: OFF")
+        self.aeb_btn.clicked.connect(self.toggle_aeb)
+        self.autopark_btn.clicked.connect(self.trigger_autopark)
+        hbox.addWidget(self.aeb_btn)
+        hbox.addWidget(self.autopark_btn)
+        safety_box.setLayout(hbox)
+        layout.addWidget(safety_box)
 
-        hbox2 = QHBoxLayout()
-        hbox2.addWidget(self.btn_stop)
-        hbox2.addWidget(self.btn_exit)
+        # -------- 종료 --------
+        exit_btn = QPushButton("Exit")
+        exit_btn.clicked.connect(self.close)
+        layout.addWidget(exit_btn)
 
-        vbox.addLayout(hbox1)
-        vbox.addLayout(hbox2)
+        self.setLayout(layout)
 
-        self.setLayout(vbox)
+    # =========================== 이벤트 핸들러 ================================
+    def on_direction(self, direction):
+        self.direction = direction
+        self.dir_label.setText(f"Direction: {direction}")
+        cmd_map = {"↑":"8","↓":"2","←":"4","→":"6","↖":"7","↗":"9","↙":"1","↘":"3","Stop":"5"}
+        if direction in cmd_map:
+            self.client.send_command(ord(cmd_map[direction]), [self.speed])
 
-    def send_cmd(self, cmd_type, val):
-        try:
-            self.client.send_command(cmd_type, val)
-            self.label_status.setText(f"📡 Sent: cmd=0x{cmd_type:02X}, val={val}")
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to send command:\n{e}")
+    def on_speed_change(self, value):
+        self.speed = value
+        self.spd_label.setText(f"Speed: {value}%")
 
-    def on_status_event(self, data):
-        """C++ vsomeip 이벤트 수신 → Python 콜백"""
+    def toggle_aeb(self):
+        self.aeb = not self.aeb
+        state = "ON" if self.aeb else "OFF"
+        self.aeb_btn.setText(f"AEB: {state}")
+        self.aeb_label.setText(f"AEB: {state}")
+        self.client.send_command(0xA0, [1 if self.aeb else 0])
+
+    def trigger_autopark(self):
+        self.autopark = True
+        self.park_label.setText("AutoPark: RUNNING")
+        self.autopark_btn.setText("AutoPark: RUNNING")
+        self.client.send_command(0xB0, [1])
+
+    def on_status_update(self, msg_type, data):
         if not data:
             return
         status_type = data[0]
-        value = data[1] if len(data) > 1 else None
 
-        text = f"Event → type=0x{status_type:02X}, val=0x{value:02X}" if value else f"Event type={status_type}"
-        self.last_event = text
+        if status_type == 0x04:  # ToF
+            if len(data) >= 3:
+                dist = int.from_bytes(bytes(data[1:3]), byteorder='little')
+                self.tof_label.setText(f"ToF: {dist} cm")
 
-    def update_status(self):
-        self.label_status.setText(self.last_event)
+        elif status_type == 0x02:  # AEB
+            self.aeb = bool(data[1] if len(data) > 1 else 0)
+            state = "ON" if self.aeb else "OFF"
+            self.aeb_btn.setText(f"AEB: {state}")
+            self.aeb_label.setText(f"AEB: {state}")
 
-    def close_app(self):
-        self.running = False
-        self.client.stop()
-        self.close()
+        elif status_type == 0x03:  # AutoPark progress
+            prog = data[1] if len(data) > 1 else 0
+            if prog >= 100:
+                self.park_label.setText("AutoPark: COMPLETE")
+                self.autopark_btn.setText("AutoPark: OFF")
+            else:
+                self.park_label.setText(f"AutoPark: {prog}%")
+                self.autopark_btn.setText("AutoPark: RUNNING")
 
 
-def main():
+# =========================== 실행 ================================
+if __name__ == "__main__":
     app = QApplication(sys.argv)
-    gui = VehGui()
+    gui = VehicleControlGUI()
     gui.show()
     sys.exit(app.exec_())
-
-
-if __name__ == "__main__":
-    main()
