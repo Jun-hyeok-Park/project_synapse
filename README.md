@@ -11,33 +11,39 @@ Project SYNAPSE는 차량 제어 기능을 서비스 단위로 분리하여 통�
 ## 🧩 시스템 아키텍처 (System Architecture)
 ```mermaid
 flowchart LR
-    subgraph GUI["GUI (PyQt / CLI)"]
-        G1["User Input<br/>(Direction, Speed, AEB...)"]
-    end
+  subgraph PC["PC<br/>(Vehicle Control GUI)"]
+    GUI["PyQt5 GUI"]
+    CLIENTSDK["vsomeipClient Binding"]
+  end
 
-    subgraph CLIENT["veh_control_client (vsomeip Client)"]
-        C1["Command Builder<br/>(cmd_type, payload)"]
-    end
+  subgraph RPI_CLIENT["RaspberryPi<br/>Vehicle Client Node"]
+    SUB["veh_status_subscriber<br/>(Service Subscriber)"]
+    CONTROL_CLI["veh_control_client<br/>(Request/Response Client)"]
+  end
 
-    subgraph SERVER["veh_control_server (vsomeip Server)"]
-        S1["Message Handler<br/>(on_message)"]
-        S2["CAN Transmitter<br/>(SocketCAN / can0)"]
-    end
+  subgraph RPI_SERVER["RaspberryPi<br/>Vehicle Server Node"]
+    PUBLISHER["veh_status_publisher<br/>(Event Publisher)"]
+    CONTROL_SRV["veh_control_server<br/>(Request/Response Server)"]
+    CAN["veh_can<br/>(CAN Interface / Sensor Layer)"]
+  end
 
-    subgraph MCU["TC375 MCU"]
-        M1["CAN Rx ISR"]
-        M2["Motor Control Logic"]
-    end
+  subgraph VEHICLE["TC375<br/>Vehicle HW Layer"]
+    MOTOR["Motor Driver<br/>(PWM Control)"]
+    TOF["ToF Sensor"]
+    ULTRA["Ultrasonic Sensors"]
+  end
 
-    GUI --> CLIENT
-    CLIENT --> SERVER
-    SERVER --> MCU
-    MCU --> SERVER
-    SERVER --> CLIENT
+  %% Connections
+  GUI --> CLIENTSDK
+  CLIENTSDK -- "vsomeip/TCP" --> CONTROL_CLI
+  CONTROL_CLI -- "Service 0x1100<br/>(Request/Response)" --> CONTROL_SRV
+  PUBLISHER -- "Service 0x1200<br/>(EventGroup 0x1001)" --> SUB
+  CONTROL_SRV -- "CAN Tx/Rx" --> CAN
+  PUBLISHER -- "Sensor Polling" --> CAN
+  CAN --> TOF
+  CAN --> ULTRA
+  CAN --> MOTOR
 ```
-- Client (RPi/PC) : 사용자의 입력(GUI/CLI)을 받아 vsomeip 요청 전송
-- Server (RPi) : 요청 수신 후 SocketCAN을 통해 TC375로 명령 전송
-- TC375 : CAN Rx 인터럽트를 통해 수신한 명령에 따라 실제 모터 제어
 
 ## ⚙️ 디렉터리 구조 (Directory Layout)
 ```
@@ -52,7 +58,7 @@ project_synapse/
 │   ├── veh_can.hpp                  # RPi ↔ TC375 CAN 송수신 공통 함수
 │   ├── veh_logger.hpp               # 로그 유틸 (레벨별 파일 출력)
 │   ├── veh_types.hpp                # typedef, enum, 구조체 등
-│   └── config.hpp                   # 환경설정 (인터페이스명, 포트 등)
+│   └── config.hpp                   # 환경설정 (네트워크, 인터페이스 등)
 │
 ├── server/
 │   ├── veh_control_server.cpp       # vsomeip 서버: 명령 수신 → CAN 송신
@@ -64,87 +70,46 @@ project_synapse/
 │   ├── veh_control_client.cpp       # vsomeip 클라이언트: 명령 송신
 │   ├── veh_status_subscriber.cpp    # 상태 Event 수신
 │   ├── veh_cli.cpp                  # CLI 기반 테스트 (키보드 입력)
-│   ├── veh_gui.py                   # PyQt GUI 제어기
+│   ├── veh_gui.py                   # PyQt GUI 제어기 (PC 실행용)
 │   └── CMakeLists.txt
 │
 ├── bindings/
-│   └── synapse_vsomeip.cpp          # pybind11 바인딩 (Python 모듈)
+│   ├── synapse_vsomeip.cpp          # pybind11 바인딩 (Python ↔ C++ 연결)
+│   └── CMakeLists.txt (추가 권장)   # pybind11 빌드 규칙 명시
 │
-├── logs/
-│   ├── veh_server.log
-│   ├── veh_client.log
-│   └── ...
+├── resources/
+│   ├── veh_server.json              # vsomeip 서버 설정 (unicast, service, port)
+│   ├── veh_client.json              # vsomeip 클라이언트 설정
+│   └── can_config.json              # CAN 설정 (bitrate, interface 등)
 │
-└── resources/
-    ├── vsomeip_server.json          # vsomeip 서버 설정
-    ├── vsomeip_client.json          # vsomeip 클라이언트 설정
-    └── can_config.json              # CAN 인터페이스 설정 (bitrate 등)
+└── logs/
+    ├── veh_server.log
+    ├── veh_client.log
+    ├── veh_status_publisher.log
+    └── veh_status_subscriber.log
 ```
 
-## 🧠 서비스 정의 (Service Overview)
+## 🧭 계층 구조
+| 계층 | 주요 구성 요소 | 설명 |
+| --- | --- | --- |
+| **Application Layer** | `veh_control_server`, `veh_status_publisher` | 차량 기능 단위 서비스 (제어/상태) 제공 |
+| **Middleware Layer (vsomeip)** | `veh_control_client`, `veh_status_subscriber` | 서비스 검색, 메시지 라우팅, 이벤트 관리 수행 |
+| **Hardware Abstraction Layer (HAL)** | `veh_can`, `veh_motor`, `veh_tof` | 센서·액추에이터 접근 추상화 |
+| **Hardware Layer** | `TC375`, `센서 모듈` | 실제 물리적 장치 및 인터페이스 |
+
+## 🛰 통신 프로토콜
+| 구분 | 방식 | QoS | 설명 |
+| --- | --- | --- | --- |
+| **veh_control_service** | Request / Response | TCP (reliable) | 클라이언트 명령 기반 제어 (예: 전진, 후진, 회전 등) |
+| **veh_status_service** | Publish / Subscribe | UDP (unreliable) | 차량 상태 브로드캐스트 (예: Drive, AEB, ToF 등) |
+| **Service Discovery (SD)** | Multicast | UDP (224.224.224.245:30490) | 서비스 자동 탐색 및 구독 관리 |
+| **CAN Communication** | Frame-based | Reliable (Polling) | MCU ↔ Sensor 간 데이터 송수신 |
+
+## 🧠 서비스 정의
 | 서비스명                    | 역할     | 통신 방향           | 설명                                      |
 | ----------------------- | ------ | --------------- | --------------------------------------- |
-| **veh_control_service** | 명령 제어  | Client → Server | 주행, 속도, AEB, AutoPark, Auth 등 통합 명령 처리  |
-| **veh_status_service**  | 상태 피드백 | Server → Client | 주행 상태, 거리(ToF), Fault, Auth 결과 등 이벤트 송신 | 
-
-## 🛰️ 통신 프로토콜 (VSOMEIP Payload) 
-🔹 Command Payload (Request) 
-| cmd_type | 기능                 | 예시 (8B Payload)                          |
-| -------- | ------------------ | ---------------------------------------- |
-| `0x01`   | Drive Direction    | `01 08 00 00 00 00 00 00`                |
-| `0x02`   | Drive Speed (Duty) | `02 46 00 00 00 00 00 00`                |
-| `0x03`   | AEB Control        | `03 01 00 00 00 00 00 00`                |
-| `0x04`   | AutoPark Control   | `04 01 00 00 00 00 00 00`                |
-| `0x05`   | Auth Password      | `05 31 32 33 34 00 00 00` (ASCII “1234”) |
-| `0xFE`   | Fault/Emergency    | `FE 01 00 00 00 00 00 00`                |
-
-🔹 Status Payload (Event)
-| status_type | 의미          | 예시                            |
-| ----------- | ----------- | ----------------------------- |
-| `0x01`      | Drive 상태    | `[0x01][0x08]` → 전진           |
-| `0x02`      | AEB 상태      | `[0x02][0x01]` → AEB ON       |
-| `0x03`      | AutoPark 단계 | `[0x03][0x02]` → 회전 단계        |
-| `0x04`      | ToF 거리(cm)  | `[0x04][0x00][0x7F]` → 127cm  |
-| `0x05`      | Fault 코드    | `[0x05][0x10]` → Sensor Fault |
-| `0x06`      | Auth 상태     | `[0x06][0x01]` → 인증 성공        |
-
-
-## 🧭 AUTOSAR 계층 구조 (Software Layering)
-```mermaid
-flowchart TB
-    subgraph APP["Application Layer"]
-        A1["veh_control_client / server"]
-    end
-
-    subgraph SRV["Service Layer"]
-        S1["veh_control_service.hpp"]
-        S2["veh_status_service.hpp"]
-    end
-
-    subgraph COM["Communication Layer"]
-        C1["vsomeip (TCP/UDP)"]
-    end
-
-    subgraph IO["I/O Abstraction Layer"]
-        I1["SocketCAN Interface"]
-        I2["veh_can_tx.cpp"]
-    end
-
-    subgraph HW["Hardware Layer"]
-        H1["TC375 MCU"]
-    end
-
-    A1 --> S1
-    A1 --> S2
-    S1 --> C1
-    C1 --> I1
-    I1 --> H1
-```
-- Application Layer : 주행 제어/상태 처리 로직
-- Service Layer : Command / Event 인터페이스 정의
-- Communication Layer : vsomeip 기반 데이터 송수신
-- I/O Layer : SocketCAN을 통해 실제 하드웨어 제어
-- Hardware Layer : TC375 MCU
+| **veh_control_service** | 명령 제어  | Client → Server | 차량 제어를 위한 Request/Response 기반 서비스로, 사용자 명령(전진, 후진, 조향, AEB 등)을 전달하여 서버가 실제 하드웨어를 제어함  |
+| **veh_status_service**  | 상태 피드백 | Server → Client | 차량 상태를 주기적으로 Publish하는 Event 기반 서비스로, Drive 상태, AEB, ToF 거리 등 주요 정보를 Subscriber에게 전송함 | 
 
 ## 🔧 빌드 & 실행 (Build & Run) 
 ### 1️⃣ 빌드
