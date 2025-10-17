@@ -35,7 +35,7 @@ public:
     }
 
     // ======================================================
-    // 🚀 Command 송신 메서드
+    // Command 송신 메서드
     // ======================================================
     void send_command(uint8_t cmd_type, const std::vector<uint8_t> &cmd_value) {
         auto msg = vsomeip::runtime::get()->create_request();
@@ -104,27 +104,27 @@ int main() {
 
     std::thread app_thread([&]() { client.start(); });
 
-    std::this_thread::sleep_for(std::chrono::seconds(1));
+    std::this_thread::sleep_for(std::chrono::seconds(3));
 
     std::cout << "=== [TEST] GUI Input Simulation Start ===" << std::endl;
 
     client.send_drive_direction(DriveDir::FORWARD);
-    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    std::this_thread::sleep_for(std::chrono::seconds(3));
 
     client.send_drive_speed(70);
-    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    std::this_thread::sleep_for(std::chrono::seconds(3));
 
     client.send_aeb_control(AebState::ON);
-    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    std::this_thread::sleep_for(std::chrono::seconds(3));
 
     client.send_autopark(AutoParkState::START);
-    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    std::this_thread::sleep_for(std::chrono::seconds(3));
 
     client.send_auth_password("1234");
-    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    std::this_thread::sleep_for(std::chrono::seconds(3));
 
     client.send_emergency_stop();
-    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    std::this_thread::sleep_for(std::chrono::seconds(3));
 
     std::cout << "=== [TEST] GUI Input Simulation End ===" << std::endl;
 

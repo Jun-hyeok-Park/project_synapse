@@ -4,37 +4,63 @@
 #include <iomanip>
 #include <sstream>
 #include <cstring>
-#include "veh_control_service.hpp"
-#include "veh_logger.hpp"
-#include "veh_can.hpp"   // 나중에 실제 구현 연결
 
+#include "veh_control_service.hpp"  // SOME/IP + CAN 통합 프로토콜 정의
+#include "veh_logger.hpp"           // 로깅 유틸리티
+#include "veh_can.hpp"              // SocketCAN 인터페이스
+
+// ───────────────────────────────────────────────
+// 전역 객체: 로거 및 CAN 인터페이스
+// ───────────────────────────────────────────────
 veh::Logger server_logger("logs/veh_control_server.log");
+CanInterface can("can0"); // CAN0 인터페이스 사용
 
-// 임시 더미 함수 (빌드용)
+// ───────────────────────────────────────────────
+// CAN 송신 함수
+//  - SocketCAN을 이용해 특정 ID로 프레임 송신
+//  - 필요 시 자동으로 초기화(init) 수행
+// ───────────────────────────────────────────────
 void veh_can_send(uint16_t can_id, const uint8_t* data, size_t len) {
-    std::ostringstream oss;
-    oss << "[CAN TX] ID=0x" << std::hex << can_id << " Data=";
-    for (size_t i = 0; i < len; i++)
-        oss << std::setw(2) << std::setfill('0') << (int)data[i] << " ";
-    LOG_INFO(server_logger, oss.str().c_str());
+    if (!can.isOpen()) {
+        if (!can.init()) {
+            LOG_ERROR(server_logger, "CAN init failed");
+            return;
+        }
+    }
+
+    CanFrame frame;
+    frame.id = can_id;
+    frame.dlc = len;
+    memcpy(frame.data.data(), data, len);
+
+    if (!can.sendFrame(frame))
+        LOG_ERROR(server_logger, "CAN TX failed");
 }
 
+// ───────────────────────────────────────────────
+// VehControlServer 클래스
+//  - SOME/IP 기반 차량 제어 서버
+//  - Client로부터 Command 수신 후 CAN으로 변환 송신
+// ───────────────────────────────────────────────
 class VehControlServer {
 public:
     VehControlServer()
         : app_(vsomeip::runtime::get()->create_application("veh_server")) {}
 
+    // vsomeip 초기화 및 핸들러 등록
     bool init() {
         if (!app_->init()) {
             LOG_ERROR(server_logger, "vsomeip init failed!");
             return false;
         }
 
+        // SOME/IP 상태 핸들러 (REGISTERED 상태 시 서비스 제공)
         app_->register_state_handler([this](vsomeip::state_type_e state) {
             if (state == vsomeip::state_type_e::ST_REGISTERED)
                 offer_service();
         });
 
+        // 요청(Request) 핸들러 등록
         app_->register_message_handler(
             VEH_CONTROL_SERVICE_ID,
             VEH_CONTROL_INSTANCE_ID,
@@ -46,6 +72,7 @@ public:
         return true;
     }
 
+    // vsomeip 이벤트 루프 시작
     void start() {
         LOG_INFO(server_logger, "Starting veh_control_server...");
         app_->start();
@@ -54,15 +81,25 @@ public:
 private:
     std::shared_ptr<vsomeip::application> app_;
 
+    // ───────────────────────────────────────────────
+    // SOME/IP 서비스 오퍼 (클라이언트에게 서비스 알림)
+    // ───────────────────────────────────────────────
     void offer_service() {
         char buf[80];
         snprintf(buf, sizeof(buf),
                  "Offered veh_control_service (0x%04X, inst 0x%04X)",
                  VEH_CONTROL_SERVICE_ID, VEH_CONTROL_INSTANCE_ID);
         LOG_INFO(server_logger, buf);
+
+        // 서비스 등록
         app_->offer_service(VEH_CONTROL_SERVICE_ID, VEH_CONTROL_INSTANCE_ID);
     }
 
+    // ───────────────────────────────────────────────
+    // SOME/IP 요청 수신 핸들러
+    //  - 클라이언트 → 서버 방향 메시지 수신
+    //  - payload에서 cmd_type, cmd_value 파싱 후 handle_command() 호출
+    // ───────────────────────────────────────────────
     void on_request(const std::shared_ptr<vsomeip::message> &request) {
         auto payload = request->get_payload();
         auto data = payload->get_data();
@@ -73,93 +110,62 @@ private:
             return;
         }
 
+        // [0]: 명령 타입(cmd_type), [1~]: 값(cmd_value)
         uint8_t cmd_type = data[0];
         std::vector<uint8_t> cmd_value(data + 1, data + len);
 
         char rxbuf[64];
-        snprintf(rxbuf, sizeof(rxbuf), "RX cmd_type=0x%02X len=%zu", cmd_type, len - 1);
+        snprintf(rxbuf, sizeof(rxbuf),
+                 "RX cmd_type=0x%02X len=%zu", cmd_type, len - 1);
         LOG_INFO(server_logger, rxbuf);
 
+        // 실제 명령 처리
         handle_command(cmd_type, cmd_value);
 
+        // 응답 (Response) 생성 및 전송
         auto resp = vsomeip::runtime::get()->create_response(request);
         std::vector<uint8_t> resp_data = { VEH_RESP_OK };
         resp->set_payload(vsomeip::runtime::get()->create_payload(resp_data));
         app_->send(resp);
     }
 
+    // ───────────────────────────────────────────────
+    // 명령 처리 함수
+    //  - cmd_type, cmd_value 기반으로 CAN 프레임 구성 후 송신
+    //  - 모든 제어 명령은 공통 ID(0x200)로 전송
+    // ───────────────────────────────────────────────
     void handle_command(uint8_t cmd_type, const std::vector<uint8_t> &cmd_value) {
         char msgbuf[80];
 
-        switch (cmd_type) {
-            case static_cast<uint8_t>(CmdType::DRIVE_DIRECTION): {
-                if (!cmd_value.empty()) {
-                    snprintf(msgbuf, sizeof(msgbuf), "→ Drive Direction: 0x%02X", cmd_value[0]);
-                    LOG_INFO(server_logger, msgbuf);
-                    veh_can_send(0x201, cmd_value.data(), cmd_value.size());
-                }
-                break;
-            }
+        // 명령 로그 출력
+        snprintf(msgbuf, sizeof(msgbuf),
+                 "→ CMD[0x%02X], Len=%zu", cmd_type, cmd_value.size());
+        LOG_INFO(server_logger, msgbuf);
 
-            case static_cast<uint8_t>(CmdType::DRIVE_SPEED): {
-                if (!cmd_value.empty()) {
-                    snprintf(msgbuf, sizeof(msgbuf), "→ Drive Speed: %u%%", cmd_value[0]);
-                    LOG_INFO(server_logger, msgbuf);
-                    veh_can_send(0x202, cmd_value.data(), cmd_value.size());
-                }
-                break;
-            }
+        // CAN 프레임 구성: [0]=cmd_type, [1~]=cmd_value
+        std::vector<uint8_t> frame_data;
+        frame_data.push_back(cmd_type);
+        frame_data.insert(frame_data.end(), cmd_value.begin(), cmd_value.end());
 
-            case static_cast<uint8_t>(CmdType::AEB_CONTROL): {
-                if (!cmd_value.empty()) {
-                    snprintf(msgbuf, sizeof(msgbuf), "→ AEB Control: %s",
-                             cmd_value[0] == static_cast<uint8_t>(AebState::ON) ? "ON" : "OFF");
-                    LOG_INFO(server_logger, msgbuf);
-                    veh_can_send(0x203, cmd_value.data(), cmd_value.size());
-                }
-                break;
-            }
-
-            case static_cast<uint8_t>(CmdType::AUTOPARK_CONTROL): {
-                if (!cmd_value.empty()) {
-                    snprintf(msgbuf, sizeof(msgbuf), "→ AutoPark: %s",
-                             cmd_value[0] == static_cast<uint8_t>(AutoParkState::START)
-                                 ? "START"
-                                 : "CANCEL");
-                    LOG_INFO(server_logger, msgbuf);
-                    veh_can_send(0x204, cmd_value.data(), cmd_value.size());
-                }
-                break;
-            }
-
-            case static_cast<uint8_t>(CmdType::AUTH_PASSWORD): {
-                std::string pw(cmd_value.begin(), cmd_value.end());
-                snprintf(msgbuf, sizeof(msgbuf), "→ Auth Password: %s", pw.c_str());
-                LOG_INFO(server_logger, msgbuf);
-                veh_can_send(0x205, cmd_value.data(), cmd_value.size());
-                break;
-            }
-
-            case static_cast<uint8_t>(CmdType::FAULT_EMERGENCY): {
-                LOG_WARN(server_logger, "→ Emergency Stop Triggered!");
-                veh_can_send(0x2FE, cmd_value.data(), cmd_value.size());
-                break;
-            }
-
-            default:
-                snprintf(msgbuf, sizeof(msgbuf), "Unknown cmd_type=0x%02X", cmd_type);
-                LOG_WARN(server_logger, msgbuf);
-                break;
-        }
+        // 단일 CAN ID(0x200)로 송신
+        veh_can_send(VEH_CONTROL_CAN_ID, frame_data.data(), frame_data.size());
     }
 };
 
+// ───────────────────────────────────────────────
+// main()
+//  - 서버 인스턴스 생성 및 실행
+// ───────────────────────────────────────────────
 int main() {
     VehControlServer server;
+
+    // 초기화 실패 시 종료
     if (!server.init()) {
         LOG_ERROR(server_logger, "Server init failed.");
         return -1;
     }
+
+    // SOME/IP 서버 실행 (이 루프는 블로킹 상태로 동작)
     server.start();
     return 0;
 }
