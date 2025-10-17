@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # ────────────────────────────────
-# 1️. 기본 설정
+# 1️⃣ 기본 설정
 # ────────────────────────────────
 message(STATUS "Configuring Project SYNAPSE")
 
@@ -13,7 +13,7 @@ set(PROJECT_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
 include_directories(${PROJECT_ROOT}/common)
 
 # ────────────────────────────────
-# 2️. vsomeip3 (라즈베리파이 경로 기준)
+# 2️⃣ vsomeip3 (라즈베리파이 기준)
 # ────────────────────────────────
 find_path(VSOMEIP_INCLUDE_DIR vsomeip/vsomeip.hpp
           PATHS /usr/local/include /usr/include)
@@ -30,7 +30,7 @@ else()
 endif()
 
 # ────────────────────────────────
-# 3️. Boost.System (vsomeip 종속)
+# 3️⃣ Boost.System (vsomeip 종속)
 # ────────────────────────────────
 find_library(BOOST_SYSTEM_LIB boost_system PATHS /usr/lib /usr/local/lib)
 if(NOT BOOST_SYSTEM_LIB)
@@ -40,7 +40,7 @@ else()
 endif()
 
 # ────────────────────────────────
-# 4️. pybind11
+# 4️⃣ pybind11 (선택)
 # ────────────────────────────────
 find_package(pybind11 QUIET)
 if(NOT pybind11_FOUND)
@@ -49,42 +49,24 @@ if(NOT pybind11_FOUND)
 endif()
 
 # ────────────────────────────────
-# 5️. 공통 헤더-only 라이브러리
+# 5️⃣ 공통 헤더-only 라이브러리
 # ────────────────────────────────
 add_library(common INTERFACE)
 target_include_directories(common INTERFACE ${PROJECT_ROOT}/common)
 target_link_libraries(common INTERFACE pthread)
 
 # ────────────────────────────────
-# 6️. 하위 모듈 (Server / Client)
+# 6️⃣ 하위 모듈 (Server / Client / Bindings)
 # ────────────────────────────────
 add_subdirectory(server)
 add_subdirectory(client)
+add_subdirectory(bindings)
 
 # ────────────────────────────────
-# 7️. Python Binding (pybind11)
-# ────────────────────────────────
-if(pybind11_FOUND)
-  message(STATUS "Building Python binding (synapse_vsomeip)")
-  pybind11_add_module(synapse_vsomeip bindings/synapse_vsomeip.cpp)
-  target_include_directories(synapse_vsomeip PRIVATE ${PROJECT_ROOT} ${PROJECT_ROOT}/common)
-  target_link_libraries(synapse_vsomeip
-    PRIVATE
-    ${VSOMEIP_LIB}
-    ${VSOMEIP_CFG_LIB}
-    ${VSOMEIP_SD_LIB}
-    ${VSOMEIP_E2E_LIB}
-    ${BOOST_SYSTEM_LIB}
-    pthread dl)
-else()
-  message(WARNING "pybind11 not available; skipping Python module build.")
-endif()
-
-# ────────────────────────────────
-# 8️. 빌드 후 안내 메시지
+# 7️⃣ 빌드 후 안내 메시지
 # ────────────────────────────────
 message(STATUS "")
-message(STATUS "Build complete!")
-message(STATUS "To use in Python:")
+message(STATUS "✅ Build complete!")
+message(STATUS "To use Python binding:")
 message(STATUS "  export PYTHONPATH=${CMAKE_BINARY_DIR}/bindings:\$PYTHONPATH")
 message(STATUS "")

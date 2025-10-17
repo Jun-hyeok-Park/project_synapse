@@ -1,3 +1,5 @@
+cmake_minimum_required(VERSION 3.14)
+
 # ────────────────────────────────
 # Client Executables
 # ────────────────────────────────
@@ -16,11 +18,21 @@ set(VSOMEIP_LIBS
     ${BOOST_SYSTEM_LIB}
     pthread
     dl
+    stdc++fs
 )
 
 # ────────────────────────────────
-# 각 실행파일에 라이브러리 연결
+# Link
 # ────────────────────────────────
 target_link_libraries(veh_control_client PRIVATE common ${VSOMEIP_LIBS})
 target_link_libraries(veh_status_subscriber PRIVATE common ${VSOMEIP_LIBS})
 target_link_libraries(veh_cli PRIVATE common ${VSOMEIP_LIBS})
+
+set_target_properties(
+    veh_control_client
+    veh_status_subscriber
+    veh_cli
+    PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+)

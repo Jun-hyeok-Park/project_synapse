@@ -13,6 +13,7 @@
 #include <mutex>
 #include <ctime>
 #include <iomanip>
+#include <filesystem>
 
 namespace veh {
 
@@ -26,10 +27,18 @@ public:
         : file_(filename, std::ios::app),
           name_(filename),
           min_level_(min_level),
-          use_color_(enable_color) {
-        if (!file_.is_open())
-            std::cerr << "[veh_logger] Failed to open: " << filename << std::endl;
-    }
+          use_color_(enable_color) 
+          {
+            std::filesystem::path p(filename);
+            if (p.has_parent_path()) 
+            {
+                std::filesystem::create_directories(p.parent_path());
+            }
+            if (!file_.is_open())
+            {
+                std::cerr << "[veh_logger] Failed to open: " << filename << std::endl;
+            }
+          }
 
     void write(LogLevel lv, const std::string &msg) {
         if (lv < min_level_)
