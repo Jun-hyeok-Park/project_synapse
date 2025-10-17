@@ -1,118 +1,133 @@
-// veh_control_client.cpp
 #include <vsomeip/vsomeip.hpp>
-#include <iostream>
-#include <vector>
-#include <chrono>
 #include <thread>
+#include <chrono>
+#include <vector>
+#include <string>
+#include <iostream>
+#include "veh_control_service.hpp"
+#include "veh_logger.hpp"
 
-static constexpr vsomeip::service_t  SERVICE_ID  = 0x1100;
-static constexpr vsomeip::instance_t INSTANCE_ID = 0x0001;
-static constexpr vsomeip::method_t   METHOD_ID   = 0x0100;
+namespace veh {
 
-class veh_client {
+class ControlClient {
 public:
-    veh_client()
-        : app_(vsomeip::runtime::get()->create_application("veh_control_client")) {}
+    ControlClient()
+        : app_(vsomeip::runtime::get()->create_application("veh_client")),
+          logger_("logs/veh_control_client.log") {}
 
     bool init() {
-        if (!app_->init()) return false;
+        if (!app_->init()) {
+            LOG_ERROR(logger_, "vsomeip init failed!");
+            return false;
+        }
 
-        app_->register_availability_handler(
-            SERVICE_ID, INSTANCE_ID,
-            std::bind(&veh_client::on_availability, this,
-                      std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        app_->register_state_handler([this](vsomeip::state_type_e state) {
+            if (state == vsomeip::state_type_e::ST_REGISTERED)
+                LOG_INFO(logger_, "veh_control_client registered to routing manager.");
+        });
 
-        app_->register_message_handler(
-            SERVICE_ID, INSTANCE_ID, METHOD_ID,
-            std::bind(&veh_client::on_response, this, std::placeholders::_1));
-
-        app_->start();
         return true;
     }
 
-    // ====== 빌더 유틸 ======
-    static std::shared_ptr<vsomeip::payload> make_payload_dir(uint8_t dir) {
-        std::vector<uint8_t> d = { 0x01, dir };
-        return vec_to_payload(d);
-    }
-    static std::shared_ptr<vsomeip::payload> make_payload_duty(uint8_t duty) {
-        std::vector<uint8_t> d = { 0x02, duty };
-        return vec_to_payload(d);
-    }
-    static std::shared_ptr<vsomeip::payload> make_payload_aeb(bool on) {
-        std::vector<uint8_t> d = { 0x03, static_cast<uint8_t>(on ? 1 : 0) };
-        return vec_to_payload(d);
-    }
-    static std::shared_ptr<vsomeip::payload> make_payload_autopark(uint8_t sub) {
-        std::vector<uint8_t> d = { 0x04, sub }; // 0x01 start, 0x00 cancel 등
-        return vec_to_payload(d);
-    }
-    static std::shared_ptr<vsomeip::payload> make_payload_auth(const std::string &pwd) {
-        std::vector<uint8_t> d = { 0x05 };
-        d.insert(d.end(), pwd.begin(), pwd.end()); // ASCII raw
-        return vec_to_payload(d);
-    }
-    static std::shared_ptr<vsomeip::payload> make_payload_fault(uint8_t sub) {
-        std::vector<uint8_t> d = { 0xFE, sub }; // 0x01 E-Stop 등
-        return vec_to_payload(d);
+    void start() {
+        LOG_INFO(logger_, "Starting veh_control_client...");
+        app_->start();
     }
 
-    // ====== 테스트 시나리오 ======
-    void run_demo_sequence() {
-        // 서버가 올라올 시간 약간 대기 (서비스 가용 대기)
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    // ======================================================
+    // 🚀 Command 송신 메서드
+    // ======================================================
+    void send_command(uint8_t cmd_type, const std::vector<uint8_t> &cmd_value) {
+        auto msg = vsomeip::runtime::get()->create_request();
+        msg->set_service(VEH_CONTROL_SERVICE_ID);
+        msg->set_instance(VEH_CONTROL_INSTANCE_ID);
+        msg->set_method(VEH_CONTROL_METHOD_ID);
 
-        call_and_print(make_payload_auth("1234"), "AUTH 1234");
-        call_and_print(make_payload_dir(0x08),    "DIR Forward");
-        call_and_print(make_payload_duty(70),     "DUTY 70%");
-        call_and_print(make_payload_aeb(true),    "AEB ON");
-        call_and_print(make_payload_autopark(0x01), "AP START");
-        call_and_print(make_payload_fault(0x01),  "FAULT E-STOP");
+        std::vector<uint8_t> payload;
+        payload.push_back(cmd_type);
+        payload.insert(payload.end(), cmd_value.begin(), cmd_value.end());
+
+        msg->set_payload(vsomeip::runtime::get()->create_payload(payload));
+
+        char buf[64];
+        snprintf(buf, sizeof(buf), "Send cmd_type=0x%02X len=%zu", cmd_type, payload.size());
+        LOG_INFO(logger_, buf);
+
+        app_->send(msg);
+    }
+
+    // ------------------------------------------------------
+    // 🔹 개별 제어 메서드
+    // ------------------------------------------------------
+    void send_drive_direction(DriveDir dir) {
+        send_command(static_cast<uint8_t>(CmdType::DRIVE_DIRECTION), {static_cast<uint8_t>(dir)});
+    }
+
+    void send_drive_speed(uint8_t duty) {
+        send_command(static_cast<uint8_t>(CmdType::DRIVE_SPEED), {duty});
+    }
+
+    void send_aeb_control(AebState state) {
+        send_command(static_cast<uint8_t>(CmdType::AEB_CONTROL), {static_cast<uint8_t>(state)});
+    }
+
+    void send_autopark(AutoParkState state) {
+        send_command(static_cast<uint8_t>(CmdType::AUTOPARK_CONTROL), {static_cast<uint8_t>(state)});
+    }
+
+    void send_auth_password(const std::string &pw) {
+        std::vector<uint8_t> v(pw.begin(), pw.end());
+        send_command(static_cast<uint8_t>(CmdType::AUTH_PASSWORD), v);
+    }
+
+    void send_emergency_stop() {
+        send_command(static_cast<uint8_t>(CmdType::FAULT_EMERGENCY), {0x01});
     }
 
 private:
-    static std::shared_ptr<vsomeip::payload> vec_to_payload(const std::vector<uint8_t> &v) {
-        auto pl = vsomeip::runtime::get()->create_payload();
-        pl->set_data(v.data(), v.size());
-        return pl;
-    }
-
-    void on_availability(vsomeip::service_t, vsomeip::instance_t, bool available) {
-        std::cout << "[CLI] Service " << (available ? "available" : "not available") << "\n";
-        if (available) {
-            run_demo_sequence();
-        }
-    }
-
-    void on_response(const std::shared_ptr<vsomeip::message> &resp) {
-        auto pl = resp->get_payload();
-        const uint8_t *d = pl->get_data();
-        std::size_t n = pl->get_length();
-        if (n >= 1)
-            std::cout << "[CLI] Response: 0x" << std::hex << int(d[0]) << std::dec << "\n";
-        else
-            std::cout << "[CLI] (no payload)\n";
-    }
-
-    void call_and_print(std::shared_ptr<vsomeip::payload> payload, const char *tag) {
-        auto req = vsomeip::runtime::get()->create_request();
-        req->set_service(SERVICE_ID);
-        req->set_instance(INSTANCE_ID);
-        req->set_method(METHOD_ID);
-        req->set_payload(payload);
-        app_->send(req);
-
-        std::cout << "[CLI] Sent " << tag << "\n";
-    }
-
     std::shared_ptr<vsomeip::application> app_;
+    veh::Logger logger_;
 };
 
+} // namespace veh
+
+// ======================================================
+// 🧩 테스트 시나리오 (GUI 입력 시뮬레이션)
+// ======================================================
 int main() {
-    veh_client c;
-    if (!c.init()) return 1;
-    // app_->start() 내부에서 이벤트루프가 돌아가므로 main이 바로 종료되지 않음.
-    // 종료는 Ctrl+C 시그널로.
-    while (true) std::this_thread::sleep_for(std::chrono::seconds(1));
+    veh::ControlClient client;
+
+    if (!client.init()) {
+        std::cerr << "Client init failed." << std::endl;
+        return -1;
+    }
+
+    std::thread app_thread([&]() { client.start(); });
+
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+
+    std::cout << "=== [TEST] GUI Input Simulation Start ===" << std::endl;
+
+    client.send_drive_direction(DriveDir::FORWARD);
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+
+    client.send_drive_speed(70);
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+
+    client.send_aeb_control(AebState::ON);
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+
+    client.send_autopark(AutoParkState::START);
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+
+    client.send_auth_password("1234");
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+
+    client.send_emergency_stop();
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+
+    std::cout << "=== [TEST] GUI Input Simulation End ===" << std::endl;
+
+    app_thread.join();
     return 0;
 }
