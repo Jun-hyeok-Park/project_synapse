@@ -6,6 +6,7 @@ cmake_minimum_required(VERSION 3.14)
 add_executable(veh_control_client veh_control_client.cpp)
 add_executable(veh_status_subscriber veh_status_subscriber.cpp)
 add_executable(veh_cli veh_cli.cpp)
+add_executable(veh_unified_client veh_unified_client.cpp)
 
 # ────────────────────────────────
 # 공통 링크 대상
@@ -27,11 +28,13 @@ set(VSOMEIP_LIBS
 target_link_libraries(veh_control_client PRIVATE common ${VSOMEIP_LIBS})
 target_link_libraries(veh_status_subscriber PRIVATE common ${VSOMEIP_LIBS})
 target_link_libraries(veh_cli PRIVATE common ${VSOMEIP_LIBS})
+target_link_libraries(veh_unified_client PRIVATE common ${VSOMEIP_LIBS})
 
 set_target_properties(
     veh_control_client
     veh_status_subscriber
     veh_cli
+    veh_unified_client
     PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED YES

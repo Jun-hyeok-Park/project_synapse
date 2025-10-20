@@ -12,7 +12,7 @@
 #define VEH_CONTROL_METHOD_ID       0x0100
 
 // CAN ID
-#define VEH_CONTROL_CAN_ID          0x200
+#define VEH_CONTROL_CAN_ID          0x300
 
 // Response byte (optional)
 #define VEH_RESP_OK                 0x00

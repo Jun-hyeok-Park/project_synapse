@@ -1,0 +1,50 @@
+{
+  "unicast": "192.168.50.2",
+
+  "logging": {
+    "level": "info",
+    "console": true
+  },
+
+  "network": "eth0",
+
+  "applications": [
+    {
+      "name": "veh_unified_server",
+      "id": "0x1101"
+    }
+  ],
+
+  "services": [
+    {
+      "service": "0x1100",
+      "instance": "0x0001",
+      "major": "0x01",
+      "minor": "0x01",
+      "reliable": 30500,
+      "unreliable": 30501
+    },
+    {
+      "service": "0x1200",
+      "instance": "0x0001",
+      "major": "0x01",
+      "minor": "0x01",
+      "unreliable": 30511
+    }
+  ],
+
+  "routing": "veh_unified_server",
+
+  "service-discovery": {
+    "enable": true,
+    "multicast": "224.224.224.245",
+    "port": 30490,
+    "initial_delay_min": 10,
+    "initial_delay_max": 100,
+    "repetitions_base_delay": 200,
+    "repetitions_max": 3,
+    "ttl": 3,
+    "cyclic_offer_delay": 2000,
+    "request_response_delay": 1500
+  }
+}

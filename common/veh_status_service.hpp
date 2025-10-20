@@ -10,6 +10,9 @@
 #define VEH_STATUS_EVENT_ID         0x0200
 #define VEH_STATUS_EVENTGROUP_ID    0x0001
 
+// CAN ID
+#define VEH_STATUS_CAN_ID           0x310
+
 // 상태 구분용 enum (1~5)
 enum class StatusType : uint8_t {
     AEB_STATE       = 0x01,  // 자동 긴급제동 활성 상태
