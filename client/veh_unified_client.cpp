@@ -6,6 +6,9 @@
 #include <chrono>
 #include <sstream>
 #include <iomanip>
+#include <signal.h>
+#include <poll.h>
+#include <cstdlib>
 #include <csignal>
 
 #include "veh_logger.hpp"
@@ -125,6 +128,14 @@ int main() {
     signal(SIGINT, on_signal);
     VehUnifiedClient client;
     if (!client.init()) return -1;
-    client.start();
+
+    std::thread app_thread([&]() { client.start(); });
+
+    while (g_running)
+        std::this_thread::sleep_for(100ms);
+
+    std::cout << "\n[INFO] Graceful shutdown..." << std::endl;
+    app_thread.join();
     return 0;
 }
+
