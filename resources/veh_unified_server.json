@@ -2,7 +2,7 @@
   "unicast": "192.168.50.2",
 
   "logging": {
-    "level": "info",
+    "level": "warning",
     "console": true
   },
 
