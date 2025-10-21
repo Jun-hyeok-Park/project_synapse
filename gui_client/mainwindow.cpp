@@ -39,10 +39,25 @@ void MainWindow::buildUi() {
     lblAutopark_  = new QLabel("AutoPark: 0x00", grpStatus);
     lblTof_       = new QLabel("ToF: 0 mm", grpStatus);
     lblAuth_      = new QLabel("Auth: -", grpStatus);
+    auto *lblPw = new QLabel("Password:", grpStatus);
+    txtPw_ = new QLineEdit(grpStatus);
+    txtPw_->setPlaceholderText("Enter password...");
+    txtPw_->setEchoMode(QLineEdit::Password);
+    auto *btnLogin = new QPushButton("LOGIN", grpStatus);
+    connect(btnLogin, &QPushButton::clicked, this, [this]() {
+        QString pw = txtPw_->text();
+        if (!pw.isEmpty() && vsThread_)
+            vsThread_->sendAuthPassword(pw.toStdString());
+    });
+
+
     gStatus->addWidget(lblAebActive_, 0, 0);
     gStatus->addWidget(lblAutopark_,  0, 1);
     gStatus->addWidget(lblTof_,       1, 0);
     gStatus->addWidget(lblAuth_,      1, 1);
+    gStatus->addWidget(lblPw,         0, 2);
+    gStatus->addWidget(txtPw_,        0, 3);
+    gStatus->addWidget(btnLogin,      0, 4);
     root->addWidget(grpStatus);
 
     // ─── 방향 버튼 그리드 (8방향 + 가운데 STOP) ────────────────
@@ -113,7 +128,9 @@ void MainWindow::onDirClicked() {
 }
 
 void MainWindow::onSpeedChanged(int v) {
-    if (vsThread_) vsThread_->sendSpeedDuty(static_cast<uint16_t>(v));
+    int step = (v / 10) * 10;   // 10 단위로 반올림
+    sldSpeed_->setValue(step);
+    if (vsThread_) vsThread_->sendSpeedDuty(static_cast<uint16_t>(step));
 }
 
 void MainWindow::onAebOn() {

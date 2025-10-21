@@ -179,3 +179,8 @@ void VsClientThread::sendAebControl(bool on) {
 void VsClientThread::sendAutoparkStart() {
     sendCommand(static_cast<uint8_t>(CmdType::AUTOPARK_CONTROL), { 0x01 });
 }
+
+void VsClientThread::sendAuthPassword(const std::string &pw) {
+    std::vector<uint8_t> bytes(pw.begin(), pw.end());
+    sendCommand(static_cast<uint8_t>(CmdType::AUTH_PASSWORD), bytes);
+}

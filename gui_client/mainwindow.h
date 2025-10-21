@@ -6,6 +6,7 @@
 #include <QTextEdit>
 #include <QGridLayout>
 #include <QGroupBox>
+#include <QLineEdit>
 #include "vsclientthread.h"
 
 class MainWindow : public QMainWindow {
@@ -39,6 +40,7 @@ private:
     QLabel *lblAutopark_{};
     QLabel *lblTof_{};
     QLabel *lblAuth_{};
+    QLineEdit *txtPw_{};
 
     QSlider *sldSpeed_{};
     QTextEdit *txtLog_{};

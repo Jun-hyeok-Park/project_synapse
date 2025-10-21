@@ -23,6 +23,7 @@ public slots:
     void sendSpeedDuty(uint16_t duty_0_1000);      // 0x02 + [duty/10] (예: 0~100)
     void sendAebControl(bool on);                  // 0x03 + [0x01/0x00]
     void sendAutoparkStart();                      // 0x04 + [0x01]
+    void sendAuthPassword(const std::string &pw);
 
 signals:
     // vSomeIP 이벤트 -> GUI (상태 표시)
